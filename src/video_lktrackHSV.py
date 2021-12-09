@@ -2,20 +2,6 @@ import cv2
 import numpy as np
 import copy
 
-# Some constraints and default parameters
-
-# Lucas-Kanade optical flow params
-lk_params = dict(winSize=(15,15), maxLevel=2,
-	criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,10,0.03))
-
-subpix_params = dict(zeroZone=(-1,-1), winSize=(10,10),
-	criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS,20,0.03))
-
-# Shi-Tomasi corner detection params
-feature_params = dict(maxCorners=50, qualityLevel=0.001, minDistance=50, blockSize=20)
-
-# Create some random colors
-color = np.random.randint(0,255,(100,3))
 
 class LKTracker(object):
 	""" Class for Lucas-Kanade tracking with
@@ -23,7 +9,6 @@ class LKTracker(object):
 
 	def __init__(self, imnames):
 		# Initialise with a list of image names
-		
 		self.imnames         = imnames
 		self.features        = []
 		self.prev_features   = []
@@ -32,15 +17,25 @@ class LKTracker(object):
 		self.detect_interval = 3
 		self.current_x       = 0
 		self.current_y       = 0
+
+		# Some constraints and default parameters
+		## Create some random colors
 		self.color = np.random.randint(0,255,(100,3))
 
+		## Lucas-Kanade optical flow params
+		self.lk_params = dict(winSize=(15,15), maxLevel=2, criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,10,0.03))
+		self.subpix_params = dict(zeroZone=(-1,-1), winSize=(10,10), criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS,20,0.03))
+		
+		## Shi-Tomasi corner detection params
+		self.feature_params = dict(maxCorners=50, qualityLevel=0.001, minDistance=50, blockSize=20)
 
-		## For thresholding
+
+		# For thresholding
 		self.threshold      = 60  # BINARY threshold
-		self.blurValue      = 5  # GaussianBlur parameter
+		self.blurValue      = 5   # GaussianBlur parameter
 		self.bgSubThreshold = 50
 		self.learningRate   = 0.003
-		self.isBgCaptured   = 0   # whether the background captured
+		self.isBgCaptured   = False   # whether the background captured
 		self.bgModel        = None
 		self.objectDetected = False
 		
@@ -55,15 +50,16 @@ class LKTracker(object):
 		self.fps       = int(self.capture.get(cv2.CAP_PROP_FPS))
 		self.writer    = cv2.VideoWriter('drone3_update_track.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (width, height))
 		__, self.frame = self.capture.read()
+
 		for i in range(5):
 			__, self.frame = self.capture.read()
 			self.bgThreshold()
 
 		# Search for good points
-		self.prev_features = cv2.goodFeaturesToTrack(self.drawing, **feature_params)
+		self.prev_features = cv2.goodFeaturesToTrack(self.drawing, **self.feature_params)
 
 		# Refine the corner locations
-		cv2.cornerSubPix(self.drawing, self.prev_features, **subpix_params)
+		cv2.cornerSubPix(self.drawing, self.prev_features, **self.subpix_params)
 
 		self.features = self.prev_features
 		print(self.features)
@@ -86,9 +82,9 @@ class LKTracker(object):
 		self.img = cv2.bilateralFilter(self.frame, 5, 50, 100)
 
 		# If background not captured, run background subtractor MOG2
-		if self.isBgCaptured == 0:
+		if not self.isBgCaptured:
 			self.bgModel = cv2.createBackgroundSubtractorMOG2(600, self.bgSubThreshold, False)
-			self.isBgCaptured = 1    # Updates that background has been captured
+			self.isBgCaptured = True    # Updates that background has been captured
 			print( 'Background Captured')
 
 		# Set the HSV values
@@ -149,10 +145,10 @@ class LKTracker(object):
 
 		# # Search for good points
 		if not self.objectDetected:
-			self.features = cv2.goodFeaturesToTrack(self.drawing, **feature_params, mask=self.mask)
+			self.features = cv2.goodFeaturesToTrack(self.drawing, **self.feature_params, mask=self.mask)
 
 			# Refine the corner locations
-			cv2.cornerSubPix(self.drawing, self.features, **subpix_params)
+			cv2.cornerSubPix(self.drawing, self.features, **self.subpix_params)
 
 		# self.tracks = [[p] for p in self.features.reshape((-1,2))]
 		
@@ -177,7 +173,7 @@ class LKTracker(object):
 		self.prev_features = self.features
 		# Calculate optical flow
 		self.bgThreshold()
-		self.features, status, track_error = cv2.calcOpticalFlowPyrLK(self.prev_drawing, self.drawing, tmp, None, **lk_params)
+		self.features, status, track_error = cv2.calcOpticalFlowPyrLK(self.prev_drawing, self.drawing, tmp, None, **self.lk_params)
 
 		# flow = cv2.calcOpticalFlowFarneback(self.prev_gray,self.gray,None,0.5,3,15,3,5,1.2,0)
 
