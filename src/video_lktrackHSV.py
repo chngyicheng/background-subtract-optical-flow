@@ -38,15 +38,39 @@ class LKTracker(object):
 		self.isBgCaptured   = False   # whether the background captured
 		self.bgModel        = None
 		self.objectDetected = False
-		
+
+
+	def track(self):
+		"""Generator for stepping through a sequence"""
+
+		while(1):
+			if self.features == []:
+				self.detectPoints()
+			else:
+				self.trackPoints()
+			
+			self.current_frame += 1
+			# cv2.imshow('LKtrack', self.out)
+			k = cv2.waitKey(30) & 0xff
+			if k == 27:
+				print(self.tracks)
+				break
+
+
 	def detectPoints(self):
 		"""Detect 'Good features to track' (corners)
 		in current frame using sub-pixel accuracy"""
 
 		# Load image and threshold image
 		self.capture   = cv2.VideoCapture(self.imnames)
+		# self.capture.set(3, 960)
+		# self.capture.set(4, 540)
 		width          = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
 		height         = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+		# print('width')
+		# print(width)
+		# print(height)
+		# print('height')
 		self.fps       = int(self.capture.get(cv2.CAP_PROP_FPS))
 		self.writer    = cv2.VideoWriter('drone3_update_track.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (width, height))
 		__, self.frame = self.capture.read()
@@ -71,8 +95,8 @@ class LKTracker(object):
 		
 		self.mask = np.zeros_like(self.frame)
 		
-		
 		self.draw()
+
 
 	def bgThreshold(self):
 		"""Main operation that runs thresholding
@@ -128,7 +152,7 @@ class LKTracker(object):
 		drawing[frame_threshold == 0] = 0
 		# cv2.drawContours(drawing, [res], 0, (255, 255, 255), thickness=-1)
 		self.drawing = cv2.cvtColor(drawing, cv2.COLOR_BGR2GRAY)
-			
+
 
 	def removeBG(self, frame): #Subtracting the background
 		fgmask = self.bgModel.apply(frame,learningRate=self.learningRate)
@@ -137,6 +161,7 @@ class LKTracker(object):
 		fgmask = cv2.erode(fgmask, kernel, iterations=1)
 		res = cv2.bitwise_and(frame, frame, mask=fgmask)
 		return res
+
 	
 	def checkPoints(self):
 		"""Re-detect 'Good features to track' (corners)
@@ -165,8 +190,6 @@ class LKTracker(object):
 		if self.current_frame % self.detect_interval == 0:
 			self.checkPoints()
 
-		
-
 		# Reshape to fit input format
 		tmp = np.float32(self.features).reshape(-1, 1, 2)
 
@@ -187,8 +210,10 @@ class LKTracker(object):
 		
 
 	def draw(self):
-		"""Draw the current image with points using OpenCV's
-		own drawing functions. Press any key to close window"""
+		"""
+		Draw the current image with points using OpenCV's
+		own drawing functions. Press any key to close window
+		"""
 
 		# Draw points as green circles
 		# for point in self.features:
@@ -196,7 +221,7 @@ class LKTracker(object):
 		self.y1 = 0
 		self.x2 = 0
 		self.y2 = 0
-		# 	self.out = cv2.circle(self.frame, (int(point[0][0]), int(point[0][1])), 3, (0, 255, 0), -1)
+
 		for i,(new,old) in enumerate(zip(self.features,self.prev_features)):
 			a,b = new.ravel()
 			c,d = old.ravel()
@@ -231,24 +256,78 @@ class LKTracker(object):
 		cv2.imshow('LKtrack', self.out)
 		# print(self.fps)
 
-		
-		
+	"""
+	Calculate 3D position of object.
+	Code from Seah Shao Xuan (@seahhorse on Github)
+	"""
+	# def calculate_3D(self):
 
-	def track(self):
-		"""Generator for stepping through a sequence"""
+	# 	fx = 1454.6
+	# 	cx = 960.9
+	# 	fy = 1450.3
+	# 	cy = 543.7
+	# 	B = 1.5
+	# 	epsilon = 7
 
-		while(1):
-			if self.features == []:
-				self.detectPoints()
-			else:
-				self.trackPoints()
-			
-			self.current_frame += 1
-			# cv2.imshow('LKtrack', self.out)
-			k = cv2.waitKey(30) & 0xff
-			if k == 27:
-				print(self.tracks)
-				break
+	# 	for (auto & matched_track : matched_tracks_) {
+
+	# 		if (matched_track.second[NUM_OF_CAMERAS_] < 2) continue;
+
+	# 		int matched_id = matched_track.first;
+	# 		int first_cam = -1;
+	# 		int second_cam = -1;
+
+	# 		for (int cam_idx = 0; cam_idx < NUM_OF_CAMERAS_; cam_idx++) {
+	# 			if (first_cam == -1) {
+	# 				if (matched_track.second[cam_idx]) first_cam = cam_idx;
+	# 			} else if (second_cam == -1) {
+	# 				if (matched_track.second[cam_idx]) second_cam = cam_idx;
+	# 			} else {
+	# 				break;
+	# 			}
+	# 		}
+
+	# 		auto track_plot_a = cumulative_tracks_[first_cam]->track_plots_[matched_id];
+	# 		auto track_plot_b = cumulative_tracks_[second_cam]->track_plots_[matched_id];
+
+	# 		if (track_plot_a->lastSeen_ != frame_count_ || track_plot_b->lastSeen_ != frame_count_) continue;
+
+	# 		int x_L = track_plot_a->xs_.back();
+	# 		int y_L = track_plot_a->ys_.back();
+	# 		int x_R = track_plot_b->xs_.back();
+	# 		int y_R = track_plot_b->ys_.back();
+
+	# 		double alpha_L = atan2(x_L - cx, fx) / M_PI * 180;
+	# 		double alpha_R = atan2(x_R - cx, fx) / M_PI * 180;
+
+	# 		double Z = B / (tan((alpha_L + epsilon / 2) * (M_PI / 180)) - tan((alpha_L - epsilon / 2) * (M_PI / 180)));
+	# 		double X = (Z * tan((alpha_L + epsilon / 2) * (M_PI / 180)) - B / 2
+	# 					+ Z * tan((alpha_R - epsilon / 2) * (M_PI / 180)) + B / 2) / 2;
+	# 		double Y = (Z * - (y_L - cy) / fy + Z * - (y_R - cy) / fy) / 2;
+
+	# 		double tilt = 10 * M_PI / 180;
+	# 		Eigen::Matrix3d R;
+	# 		R << 1, 0, 0,
+	# 			0, cos(tilt), sin(tilt),
+	# 			0, -sin(tilt), cos(tilt);
+	# 		Eigen::Vector3d XYZ_original;
+	# 		XYZ_original << X, Y, Z;
+	# 		auto XYZ = R * XYZ_original;
+	# 		X = XYZ(0);
+	# 		Y = XYZ(1);
+	# 		Z = XYZ(2);
+
+	# 		Y += 1;
+
+	# 		X = (std::round(X*100))/100;
+	# 		Y = (std::round(Y*100))/100;
+	# 		Z = (std::round(Z*100))/100;
+
+	# 		track_plot_a->xyz_ = {X, Y, Z};
+	# 		track_plot_b->xyz_ = {X, Y, Z};
+
+	# 		log_3D(track_plot_a, track_plot_b);
+
 
 # Unfinished code for background velocity calculation
 # flow = cv2.calcOpticalFlowFarneback(self.prev_gray,self.gray,None,0.5,3,15,3,5,1.2,0)
