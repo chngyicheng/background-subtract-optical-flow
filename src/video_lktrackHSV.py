@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import copy
+import math
 
 
 class LKTracker(object):
@@ -13,17 +14,21 @@ class LKTracker(object):
 		self.features        = []
 		self.prev_features   = []
 		self.tracks          = []
+		self.vel_orient      = []
 		self.current_frame   = 0
 		self.detect_interval = 3
-		self.current_x       = 0
-		self.current_y       = 0
+		self.dx              = 0
+		self.dy              = 0
+		self.velocity        = [0, 0, 0]
+		self.area            = 0
+		self.prev_area       = 0
 
 		# Some constraints and default parameters
 		## Create some random colors
 		self.color = np.random.randint(0,255,(100,3))
 
 		## Lucas-Kanade optical flow params
-		self.lk_params = dict(winSize=(15,15), maxLevel=2, criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,10,0.03))
+		self.lk_params     = dict(winSize=(15,15), maxLevel=2, criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,10,0.03))
 		self.subpix_params = dict(zeroZone=(-1,-1), winSize=(10,10), criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS,20,0.03))
 		
 		## Shi-Tomasi corner detection params
@@ -65,14 +70,14 @@ class LKTracker(object):
 		self.capture   = cv2.VideoCapture(self.imnames)
 		# self.capture.set(3, 960)
 		# self.capture.set(4, 540)
-		width          = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-		height         = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+		self.width          = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+		self.height         = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 		# print('width')
 		# print(width)
 		# print(height)
 		# print('height')
 		self.fps       = int(self.capture.get(cv2.CAP_PROP_FPS))
-		self.writer    = cv2.VideoWriter('drone3_update_track.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (width, height))
+		self.writer    = cv2.VideoWriter('drone3_update_track.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
 		__, self.frame = self.capture.read()
 
 		for i in range(5):
@@ -139,18 +144,38 @@ class LKTracker(object):
 			s_high = 76
 			v_high = 255
 		
-		# If object not detected, 
-		img_hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
+		img_hsv  = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
 		img_blur = cv2.GaussianBlur(img_hsv, (self.blurValue, self.blurValue), 0)
+		# h, s, v  = cv2.split(img_blur)
 		
 		frame_threshold = cv2.inRange(img_blur, (h_low, s_low, v_low), (h_high, s_high, v_high))
 		frame_threshold = self.removeBG(frame_threshold)
+		cv2.imshow('thresh',frame_threshold)
+
+		
+		if self.objectDetected:
+			# con_img = frame_threshold[x1:x2,y1:y2]
+			con_img = img_blur.copy()
+			con_img[self.object_mask == 0] = 0
+			con_img = cv2.inRange(img_blur, (h_low, s_low, v_low), (h_high, s_high, v_high))
+			# con_img = self.removeBG(con_img)
+			# EDIT HERE IMPT STUFF
+			# get contours
+			contours, hierarchy = cv2.findContours(con_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE) #detecting contours
+
+			# contours_area = []
+			# calculate area and filter into new array
+			# for con in contours:
+			self.area = cv2.contourArea(contours[0])
+			# print(self.area)
+				# if 1000 < area < 10000:
+				# 	contours_area.append(con)
+		
 
 		# cv2.imshow('th', frame_threshold)
 
 		drawing = self.img.copy()
 		drawing[frame_threshold == 0] = 0
-		# cv2.drawContours(drawing, [res], 0, (255, 255, 255), thickness=-1)
 		self.drawing = cv2.cvtColor(drawing, cv2.COLOR_BGR2GRAY)
 
 
@@ -175,7 +200,6 @@ class LKTracker(object):
 			# Refine the corner locations
 			cv2.cornerSubPix(self.drawing, self.features, **self.subpix_params)
 
-		# self.tracks = [[p] for p in self.features.reshape((-1,2))]
 		
 
 	def trackPoints(self):
@@ -198,11 +222,14 @@ class LKTracker(object):
 		self.bgThreshold()
 		self.features, status, track_error = cv2.calcOpticalFlowPyrLK(self.prev_drawing, self.drawing, tmp, None, **self.lk_params)
 
-		# flow = cv2.calcOpticalFlowFarneback(self.prev_gray,self.gray,None,0.5,3,15,3,5,1.2,0)
+		# flow = cv2.calcOpticalFlowFarneback(self.prev_drawing,self.drawing,None,0.5,3,15,3,5,1.2,0)
 
-		self.current_x = (self.features[0][0][0] - self.prev_features[0][0][0]) / (1/self.fps)
-		self.current_y = -1*(self.features[0][0][1] - self.prev_features[0][0][1]) / (1/self.fps)
+		self.dx += (self.features[0][0][0] - self.prev_features[0][0][0]) #/ (1/self.fps)
+		self.dy += (self.features[0][0][1] - self.prev_features[0][0][1])# / (1/self.fps)
 		self.draw()
+
+		# Update all prev to current
+		self.prev_area = self.area
 		self.prev_drawing = self.drawing
 		self.current_frame += 1
 		cv2.imshow("input", self.drawing)
@@ -244,13 +271,18 @@ class LKTracker(object):
 		self.frame = cv2.circle(self.frame,(self.x1,self.y1),5,self.color[i].tolist(),-1)
 
 		self.out = cv2.add(self.frame,self.mask)
-		cv2.putText(self.out, 'x = '+ str(self.current_x), (self.x1+20, self.y1-15),
+		self.update_3D_velocity_orientation()
+		float_dx = "{:.2f}".format(self.velocity[0])
+		float_dy = "{:.2f}".format(self.velocity[1])
+		float_dz = "{:.2f}".format(self.velocity[2])
+		float_time = "{:.2f}".format(self.current_frame/self.fps)
+		cv2.putText(self.out, ("Vx =  " + str(float_dx)), (self.x1+20, self.y1-15),
                 cv2.FONT_HERSHEY_PLAIN, 1 , (0,0,0), thickness=2)
-		cv2.putText(self.out, 'y = ' + str(self.current_y), (self.x1+20, self.y1),
+		cv2.putText(self.out, 'Vy = ' + str(float_dy), (self.x1+20, self.y1),
                 cv2.FONT_HERSHEY_PLAIN, 1 , (0,0,0), thickness=2)
-		cv2.putText(self.out, 'z = ?', (self.x1+20, self.y1+15),
+		cv2.putText(self.out, 'Vz = ' + str(float_dz), (self.x1+20, self.y1+15),
                 cv2.FONT_HERSHEY_PLAIN, 1 , (0,0,0), thickness=2)
-		cv2.putText(self.out, 't = ' + str(self.current_frame/self.fps), (self.x1+20, self.y1+30),
+		cv2.putText(self.out, 't = ' + str(float_time), (self.x1+20, self.y1+30),
                 cv2.FONT_HERSHEY_PLAIN, 1 , (0,0,0), thickness=2)
 		self.writer.write(self.out)
 		cv2.imshow('LKtrack', self.out)
@@ -260,73 +292,60 @@ class LKTracker(object):
 	Calculate 3D position of object.
 	Code from Seah Shao Xuan (@seahhorse on Github)
 	"""
-	# def calculate_3D(self):
+	def update_3D_velocity_orientation(self) :
+		# checks if the data is from the current frame
+		# if (frameNos_.size() > 15 && frameNos_.back() == frame_no):
 
-	# 	fx = 1454.6
-	# 	cx = 960.9
-	# 	fy = 1450.3
-	# 	cy = 543.7
-	# 	B = 1.5
-	# 	epsilon = 7
+		history = 15
 
-	# 	for (auto & matched_track : matched_tracks_) {
+		# declare camera lens parameters
+		
+		# Specs for the Creative Camera
+		# FOV_X_ = 69.5
+		# FOV_Y_ = 42.6
 
-	# 		if (matched_track.second[NUM_OF_CAMERAS_] < 2) continue;
+		# Specs for the GOPRO HERO 9 Camera
+		# FOV_X_ = 87
+		# FOV_Y_ = 56
 
-	# 		int matched_id = matched_track.first;
-	# 		int first_cam = -1;
-	# 		int second_cam = -1;
+		# Specs for Mavic Mini Camera
+		FOV_X_ = 82
+		FOV_Y_ = 39
+		self.features[0][0][0] - self.prev_features[0][0][0]
+		
+		# dx = xs_.end()[-1] - xs_.end()[-1-history];
+		# double dy = ys_.end()[-1] - ys_.end()[-1-history];
+		
+		if (self.area == 0 or self.prev_area == 0):
+			r = 1
+		else:
+			r = math.sqrt(self.area/self.prev_area)
+		
+		
+		# std::array<double, 3> self.velocity;
 
-	# 		for (int cam_idx = 0; cam_idx < NUM_OF_CAMERAS_; cam_idx++) {
-	# 			if (first_cam == -1) {
-	# 				if (matched_track.second[cam_idx]) first_cam = cam_idx;
-	# 			} else if (second_cam == -1) {
-	# 				if (matched_track.second[cam_idx]) second_cam = cam_idx;
-	# 			} else {
-	# 				break;
-	# 			}
-	# 		}
+		velocity_x = (self.dx / self.width) * 2 * math.tan(math.pi / 180.0 * FOV_X_ / 2.0)
+		velocity_x += ((1.0 / r) - 1.0) / math.tan(((self.features[0][0][0] / self.width) - 0.5) * FOV_X_ * math.pi / 180.0)
 
-	# 		auto track_plot_a = cumulative_tracks_[first_cam]->track_plots_[matched_id];
-	# 		auto track_plot_b = cumulative_tracks_[second_cam]->track_plots_[matched_id];
+		velocity_y = -1* (self.dy / self.height) * 2 * math.tan(math.pi / 180.0 * FOV_Y_ / 2.0)
+		velocity_y -= ((1.0 / r) - 1.0) / math.tan(((self.features[0][0][1] / self.height) - 0.5) * FOV_Y_ * math.pi / 180.0)
 
-	# 		if (track_plot_a->lastSeen_ != frame_count_ || track_plot_b->lastSeen_ != frame_count_) continue;
+		velocity_z = (1.0 / r) - 1.0
 
-	# 		int x_L = track_plot_a->xs_.back();
-	# 		int y_L = track_plot_a->ys_.back();
-	# 		int x_R = track_plot_b->xs_.back();
-	# 		int y_R = track_plot_b->ys_.back();
+		self.velocity_length = math.sqrt(pow(velocity_x, 2) + pow(velocity_y, 2) + pow(velocity_z, 2))
+		print(self.velocity_length)
 
-	# 		double alpha_L = atan2(x_L - cx, fx) / M_PI * 180;
-	# 		double alpha_R = atan2(x_R - cx, fx) / M_PI * 180;
+		if (self.velocity_length != 0 and self.velocity_length >= 0.05):
+			self.velocity[0] = velocity_x / self.velocity_length; 
+			self.velocity[1] = velocity_y / self.velocity_length; 
+			self.velocity[2] = velocity_z / self.velocity_length; 
+		else:
+			self.velocity[0] = 0.0
+			self.velocity[1] = 0.0
+			self.velocity[2] = 0.0
+		
 
-	# 		double Z = B / (tan((alpha_L + epsilon / 2) * (M_PI / 180)) - tan((alpha_L - epsilon / 2) * (M_PI / 180)));
-	# 		double X = (Z * tan((alpha_L + epsilon / 2) * (M_PI / 180)) - B / 2
-	# 					+ Z * tan((alpha_R - epsilon / 2) * (M_PI / 180)) + B / 2) / 2;
-	# 		double Y = (Z * - (y_L - cy) / fy + Z * - (y_R - cy) / fy) / 2;
-
-	# 		double tilt = 10 * M_PI / 180;
-	# 		Eigen::Matrix3d R;
-	# 		R << 1, 0, 0,
-	# 			0, cos(tilt), sin(tilt),
-	# 			0, -sin(tilt), cos(tilt);
-	# 		Eigen::Vector3d XYZ_original;
-	# 		XYZ_original << X, Y, Z;
-	# 		auto XYZ = R * XYZ_original;
-	# 		X = XYZ(0);
-	# 		Y = XYZ(1);
-	# 		Z = XYZ(2);
-
-	# 		Y += 1;
-
-	# 		X = (std::round(X*100))/100;
-	# 		Y = (std::round(Y*100))/100;
-	# 		Z = (std::round(Z*100))/100;
-
-	# 		track_plot_a->xyz_ = {X, Y, Z};
-	# 		track_plot_b->xyz_ = {X, Y, Z};
-
-	# 		log_3D(track_plot_a, track_plot_b);
+		self.vel_orient.append(self.velocity)
 
 
 # Unfinished code for background velocity calculation
