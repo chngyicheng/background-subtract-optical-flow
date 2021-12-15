@@ -32,53 +32,34 @@ class LKTracker(object):
 		self.subpix_params = dict(zeroZone=(-1,-1), winSize=(10,10), criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS,20,0.03))
 		
 		## Shi-Tomasi corner detection params
-		self.feature_params = dict(maxCorners=50, qualityLevel=0.001, minDistance=50, blockSize=20)
-
+		self.feature_params = dict(maxCorners=5, qualityLevel=0.001, minDistance=50, blockSize=20)
 
 		# For thresholding
 		self.threshold      = 60  # BINARY threshold
 		self.blurValue      = 5   # GaussianBlur parameter
 		self.bgSubThreshold = 50
 		self.learningRate   = 0.003
-		self.isBgCaptured   = False   # whether the background captured
 		self.bgModel        = None
+
+		# Initialise flags
+		self.isBgCaptured   = False   # whether the background captured
 		self.objectDetected = False
-
-
-	def track(self):
-		"""Generator for stepping through a sequence"""
-
-		while(1):
-			if self.features == []:
-				self.detectPoints()
-			else:
-				self.trackPoints()
-			
-			self.current_frame += 1
-			# cv2.imshow('LKtrack', self.out)
-			k = cv2.waitKey(30) & 0xff
-			if k == 27:
-				print(self.tracks)
-				break
-
+		self.bgFlowInit     = False
+		
 
 	def detectPoints(self):
 		"""Detect 'Good features to track' (corners)
 		in current frame using sub-pixel accuracy"""
 
 		# Load image and threshold image
-		self.capture   = cv2.VideoCapture(self.imnames)
-		# self.capture.set(3, 960)
-		# self.capture.set(4, 540)
-		self.width          = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-		self.height         = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-		# print('width')
-		# print(width)
-		# print(height)
-		# print('height')
-		self.fps       = int(self.capture.get(cv2.CAP_PROP_FPS))
-		self.writer    = cv2.VideoWriter('drone3_update_track.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
-		__, self.frame = self.capture.read()
+		self.capture    = cv2.VideoCapture(self.imnames)
+		self.width      = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+		self.height     = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+		self.fps        = int(self.capture.get(cv2.CAP_PROP_FPS))
+		self.writer1    = cv2.VideoWriter('drone2_update_track.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
+		self.writer2    = cv2.VideoWriter('farnebackflow2.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
+		__, self.frame  = self.capture.read()
 
 		for i in range(5):
 			__, self.frame = self.capture.read()
@@ -98,7 +79,8 @@ class LKTracker(object):
 		self.prev_drawing = self.drawing
 		# cv2.imshow('test', self.prev_drawing)
 		
-		self.mask = np.zeros_like(self.frame)
+		self.mask  = np.zeros_like(self.frame)
+		self.arrow = np.zeros_like(self.frame)
 		
 		self.draw()
 
@@ -124,17 +106,12 @@ class LKTracker(object):
 		s_high = 65
 		v_high = 255
 
-		# If object (drone) has been detected, create a mask to focus
-		# on object with square of side (85 x 85) pixels, then creates
-		# new image of frame in HSV with clearer image (parameters of 
-		# thresholding and removes BG
+		# If object (drone) has been detected, create a rectangle mask
+		# to focus on object, then creates new image of frame in HSV 
+		# with clearer image (parameters of thresholding) and removes BG
 		if self.objectDetected:
-			self.object_mask = np.zeros_like(self.frame)
-			x1 = self.x1 - 85
-			y1 = self.y1 - 85
-			x2 = self.x2 + 85
-			y2 = self.y2 + 85
-			cv2.rectangle(self.object_mask, (x1, y1), (x2, y2), (255,0,0), -1)
+			# Create rectangular mask to track object
+			self.FGMaskUpdate()
 			
 			# Update HSV value if object found
 			h_low  = 0
@@ -150,7 +127,7 @@ class LKTracker(object):
 		
 		frame_threshold = cv2.inRange(img_blur, (h_low, s_low, v_low), (h_high, s_high, v_high))
 		frame_threshold = self.removeBG(frame_threshold)
-		cv2.imshow('thresh',frame_threshold)
+		# cv2.imshow('thresh',frame_threshold)
 
 		
 		if self.objectDetected:
@@ -159,18 +136,11 @@ class LKTracker(object):
 			con_img[self.object_mask == 0] = 0
 			con_img = cv2.inRange(img_blur, (h_low, s_low, v_low), (h_high, s_high, v_high))
 			# con_img = self.removeBG(con_img)
-			# EDIT HERE IMPT STUFF
+			
 			# get contours
 			contours, hierarchy = cv2.findContours(con_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE) #detecting contours
 
-			# contours_area = []
-			# calculate area and filter into new array
-			# for con in contours:
 			self.area = cv2.contourArea(contours[0])
-			# print(self.area)
-				# if 1000 < area < 10000:
-				# 	contours_area.append(con)
-		
 
 		# cv2.imshow('th', frame_threshold)
 
@@ -179,7 +149,50 @@ class LKTracker(object):
 		self.drawing = cv2.cvtColor(drawing, cv2.COLOR_BGR2GRAY)
 
 
-	def removeBG(self, frame): #Subtracting the background
+	def FGMaskUpdate(self):
+		"""Update foreground mask to track object"""
+
+		# Create empty mask to track object
+		self.object_mask = [[0]*self.width]*self.height
+		self.object_mask = np.asarray(self.object_mask)
+		self.object_mask = self.object_mask.astype(np.uint8)
+
+		# Draw rectangle of opposing corners of (x1, y1), (x2, y2)
+		x1 = self.x1 - 65
+		y1 = self.y1 - 45
+		x2 = self.x2 + 65
+		y2 = self.y2 + 45
+		self.object_mask[y1:y2, x1:x2]  = 255
+
+	
+	def BGMaskUpdate(self):
+		"""Update background mask to track object"""
+
+		# Create mask of ones ignoring drone for background flow calculation
+		bg_flow_mask = [[1]*self.width]*self.height
+		bg_flow_mask = np.asarray(bg_flow_mask)
+		bg_flow_mask = bg_flow_mask.astype(np.uint8)
+
+		# Draw rectangle of opposing corners of (x1, y1), (x2, y2) and equate it
+		# to 0
+		x1 = self.x1 - 65
+		y1 = self.y1 - 45
+		x2 = self.x2 + 65
+		y2 = self.y2 + 45
+		bg_flow_mask[y1:y2, x1:x2] = 0
+
+		gray_frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
+
+		self.bg_flow_masked = gray_frame.copy()
+		# self.bg_flow_mask[self.object_mask == 1] = 0
+		self.bg_flow_masked[bg_flow_mask == 0] = 0
+
+		cv2.imshow("bg flow", self.bg_flow_masked)
+
+
+	def removeBG(self, frame):
+		"""Subtracts the background"""
+
 		fgmask = self.bgModel.apply(frame,learningRate=self.learningRate)
 
 		kernel = np.ones((3, 3), np.uint8)
@@ -191,26 +204,29 @@ class LKTracker(object):
 	def checkPoints(self):
 		"""Re-detect 'Good features to track' (corners)
 		in current frame using sub-pixel accuracy"""
-		self.color = np.random.randint(0,255,(100,3))
+		
+		
 
 		# # Search for good points
-		if not self.objectDetected:
-			self.features = cv2.goodFeaturesToTrack(self.drawing, **self.feature_params, mask=self.mask)
+		if self.current_frame > 5 and self.objectDetected:
+			self.color = np.random.randint(0,255,(100,3))
+			self.features = cv2.goodFeaturesToTrack(self.drawing, **self.feature_params, mask=self.object_mask)
 
 			# Refine the corner locations
 			cv2.cornerSubPix(self.drawing, self.features, **self.subpix_params)
 
-		
+			# cv2.imshow("drawing", self.drawing)
 
-	def trackPoints(self):
+		
+	def trackPointsLK(self):
 		"""Track the detected features"""
 
 		# Load the image and create grayscale
 		__, self.frame = self.capture.read()
-		self.gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
-		# self.bgThreshold()
+		# self.gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
+		self.bgThreshold()
 
-		"""To be used later, re-checks detection every few frames"""
+		# Re-checks detection every few frames
 		if self.current_frame % self.detect_interval == 0:
 			self.checkPoints()
 
@@ -219,22 +235,63 @@ class LKTracker(object):
 
 		self.prev_features = self.features
 		# Calculate optical flow
-		self.bgThreshold()
+		# self.bgThreshold()
 		self.features, status, track_error = cv2.calcOpticalFlowPyrLK(self.prev_drawing, self.drawing, tmp, None, **self.lk_params)
 
-		# flow = cv2.calcOpticalFlowFarneback(self.prev_drawing,self.drawing,None,0.5,3,15,3,5,1.2,0)
+		# self.BGFlowTrackFB()
 
 		self.dx += (self.features[0][0][0] - self.prev_features[0][0][0]) #/ (1/self.fps)
-		self.dy += (self.features[0][0][1] - self.prev_features[0][0][1])# / (1/self.fps)
+		self.dy -= (self.features[0][0][1] - self.prev_features[0][0][1])# / (1/self.fps)
 		self.draw()
 
 		# Update all prev to current
 		self.prev_area = self.area
 		self.prev_drawing = self.drawing
-		self.current_frame += 1
-		cv2.imshow("input", self.drawing)
-		# cv2.imshow("mask", self.object_mask)
 		
+
+		self.current_frame += 1
+		# cv2.imshow("input", self.drawing)
+		cv2.imshow("mask", self.object_mask)
+	
+
+	def BGFlowTrackFB(self):
+		"""Track the background flow with Farneback Optical Flow"""
+
+		# Update mask used for background
+		self.BGMaskUpdate()
+		if self.bgFlowInit == False:
+			self.hsv_mask = np.zeros_like(self.frame)
+			self.hsv_mask[..., 1] = 255
+			self.prev_bg_flow_masked = self.bg_flow_masked
+			self.bgFlowInit = True
+
+		self.flow = cv2.calcOpticalFlowFarneback(self.prev_drawing,self.drawing,None,0.5,3,15,3,5,1.2,0)
+		# Compute magnitude and angle of 2D vector
+		mag, ang = cv2.cartToPolar(self.flow[..., 0], self.flow[..., 1])
+		# Set image hue value according to the angle of optical flow
+		self.hsv_mask[..., 0] = ang * 180 / math.pi / 2
+		# Set value as per the normalized magnitude of optical flow
+		self.hsv_mask[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+		# Convert to rgb
+		rgb_representation = cv2.cvtColor(self.hsv_mask, cv2.COLOR_HSV2BGR)
+
+		# Get start and end coordinates of the optical flow
+		self.flow_start = np.stack(np.meshgrid(range(self.flow.shape[1]), range(self.flow.shape[0])), 2)
+		self.flow_end = (self.flow[self.flow_start[:,:,1],self.flow_start[:,:,0],:1]*3 + self.flow_start).astype(np.int32)
+
+		# Threshold values
+		norm = np.linalg.norm(self.flow_end - self.flow_start, axis=2)
+		norm[norm < 2] = 0
+
+		self.nz = np.nonzero(norm)
+		
+		# Update all prev to current
+		self.prev_bg_flow_masked = self.bg_flow_masked
+		self.prev_flow = self.flow
+	
+		cv2.imshow('frame2', rgb_representation)
+		self.writer2.write(rgb_representation)
+
 
 	def draw(self):
 		"""
@@ -252,39 +309,64 @@ class LKTracker(object):
 		for i,(new,old) in enumerate(zip(self.features,self.prev_features)):
 			a,b = new.ravel()
 			c,d = old.ravel()
+			self.mask  = cv2.line(self.mask, (a,b),(c,d), self.color[i].tolist(), 2)
+			self.frame = cv2.circle(self.frame,(a,b),5,self.color[i].tolist(),-1)
 			self.x1 += a
 			self.y1 += b
 			self.x2 += c
 			self.y2 += d
+
 		if i > 0:
 			self.x1 = int(self.x1 / (i+1))
 			self.y1 = int(self.y1 / (i+1))
 			self.x2 = int(self.x2 / (i+1))
 			self.y2 = int(self.y2 / (i+1))
+			# self.x1 = int(self.x1)
+			# self.y1 = int(self.y1)
+			# self.x2 = int(self.x2)
+			# self.y2 = int(self.y2)
 		else:
 			self.x1 = int(self.x1)
 			self.y1 = int(self.y1)
 			self.x2 = int(self.x2)
 			self.y2 = int(self.y2)
 
-		self.mask  = cv2.line(self.mask, (self.x1,self.y1),(self.x2,self.y2), self.color[i].tolist(), 2)
-		self.frame = cv2.circle(self.frame,(self.x1,self.y1),5,self.color[i].tolist(),-1)
+		# self.mask  = cv2.line(self.mask, (self.x1,self.y1),(self.x2,self.y2), self.color[i].tolist(), 2)
+		# self.frame = cv2.circle(self.frame,(self.x1,self.y1),5,self.color[i].tolist(),-1)
+
+		# if self.bgFlowInit == True and self.current_frame > 5:
+		# 	for i in range(0, len(self.nz[0]), 30):
+		# 		y, x = self.nz[0][i], self.nz[1][i]
+		# 		print("BG LOOP Working")
+		# 		self.arrow  = cv2.arrowedLine(self.arrow,
+		# 						pt1=tuple(self.flow_start[y,x]), 
+		# 						pt2=tuple(self.flow_end[y,x]),
+		# 						color=(0, 255, 0), 
+		# 						thickness=1, 
+		# 						tipLength=.2)
+		# 	self.out = cv2.add(self.frame,self.arrow)
 
 		self.out = cv2.add(self.frame,self.mask)
+		
 		self.update_3D_velocity_orientation()
-		float_dx = "{:.2f}".format(self.velocity[0])
-		float_dy = "{:.2f}".format(self.velocity[1])
+
+		# float_dx = "{:.2f}".format(self.velocity[0])
+		# float_dy = "{:.2f}".format(self.velocity[1])
+		float_dx = "{:.2f}".format(self.dx)
+		float_dy = "{:.2f}".format(self.dy)
 		float_dz = "{:.2f}".format(self.velocity[2])
 		float_time = "{:.2f}".format(self.current_frame/self.fps)
-		cv2.putText(self.out, ("Vx =  " + str(float_dx)), (self.x1+20, self.y1-15),
+
+		cv2.putText(self.out, 'dx = ' + str(float_dx), (self.x1+40, self.y1-15),
                 cv2.FONT_HERSHEY_PLAIN, 1 , (0,0,0), thickness=2)
-		cv2.putText(self.out, 'Vy = ' + str(float_dy), (self.x1+20, self.y1),
+		cv2.putText(self.out, 'dy = ' + str(float_dy), (self.x1+40, self.y1),
                 cv2.FONT_HERSHEY_PLAIN, 1 , (0,0,0), thickness=2)
-		cv2.putText(self.out, 'Vz = ' + str(float_dz), (self.x1+20, self.y1+15),
+		cv2.putText(self.out, 'Vz = ' + str(float_dz), (self.x1+40, self.y1+15),
                 cv2.FONT_HERSHEY_PLAIN, 1 , (0,0,0), thickness=2)
-		cv2.putText(self.out, 't = ' + str(float_time), (self.x1+20, self.y1+30),
+		cv2.putText(self.out, 't  = ' + str(float_time), (self.x1+40, self.y1+30),
                 cv2.FONT_HERSHEY_PLAIN, 1 , (0,0,0), thickness=2)
-		self.writer.write(self.out)
+		
+		self.writer1.write(self.out)
 		cv2.imshow('LKtrack', self.out)
 		# print(self.fps)
 
@@ -311,7 +393,7 @@ class LKTracker(object):
 		# Specs for Mavic Mini Camera
 		FOV_X_ = 82
 		FOV_Y_ = 39
-		self.features[0][0][0] - self.prev_features[0][0][0]
+		# self.features[0][0][0] - self.prev_features[0][0][0]
 		
 		# dx = xs_.end()[-1] - xs_.end()[-1-history];
 		# double dy = ys_.end()[-1] - ys_.end()[-1-history];
@@ -322,8 +404,6 @@ class LKTracker(object):
 			r = math.sqrt(self.area/self.prev_area)
 		
 		
-		# std::array<double, 3> self.velocity;
-
 		velocity_x = (self.dx / self.width) * 2 * math.tan(math.pi / 180.0 * FOV_X_ / 2.0)
 		velocity_x += ((1.0 / r) - 1.0) / math.tan(((self.features[0][0][0] / self.width) - 0.5) * FOV_X_ * math.pi / 180.0)
 
@@ -333,7 +413,7 @@ class LKTracker(object):
 		velocity_z = (1.0 / r) - 1.0
 
 		self.velocity_length = math.sqrt(pow(velocity_x, 2) + pow(velocity_y, 2) + pow(velocity_z, 2))
-		print(self.velocity_length)
+		# print(self.velocity_length)
 
 		if (self.velocity_length != 0 and self.velocity_length >= 0.05):
 			self.velocity[0] = velocity_x / self.velocity_length; 
@@ -346,6 +426,23 @@ class LKTracker(object):
 		
 
 		self.vel_orient.append(self.velocity)
+
+
+	def track(self):
+		"""Generator for stepping through a sequence"""
+
+		while(1):
+			if self.features == []:
+				self.detectPoints()
+			else:
+				self.trackPointsLK()
+			
+			self.current_frame += 1
+			# cv2.imshow('LKtrack', self.out)
+			k = cv2.waitKey(30) & 0xff
+			if k == 27:
+				print(self.tracks)
+				break
 
 
 # Unfinished code for background velocity calculation
