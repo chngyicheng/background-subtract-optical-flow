@@ -308,7 +308,6 @@ class LKTracker(object):
 		if self.bgFlowInit == False:
 			self.hsv_mask = np.zeros_like(current_frame)
 			self.hsv_mask[..., 1] = 255
-			# self.prev_bg_flow_masked = self.bg_flow_masked
 			self.bgFlowInit = True
 
 		## Test code
@@ -335,7 +334,7 @@ class LKTracker(object):
 		self.flow_end = (self.flow[self.flow_start[:,:,1],self.flow_start[:,:,0],:1]*3 + self.flow_start).astype(np.int32)
 
 		# Calculate optical flow
-		
+
 
 
 		# Threshold values
