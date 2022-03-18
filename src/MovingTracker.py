@@ -1,4 +1,3 @@
-from cmath import pi
 import cv2
 import numpy as np
 import copy
@@ -69,8 +68,8 @@ class LKDenseTracker(object):
 		self.height     = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 		self.fps        = int(self.capture.get(cv2.CAP_PROP_FPS))
-		self.writer1    = cv2.VideoWriter('multidrone_test.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
-		self.writer2    = cv2.VideoWriter('k_means_flow.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, int(self.height)))#/4*3)))
+		self.writer1    = cv2.VideoWriter('drone_track.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
+		self.writer2    = cv2.VideoWriter('bg_flow.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, int(self.height)))#/4*3)))
 		__, self.frame  = self.capture.read()
 
 		# for i in range(self.min_detect_frames):
@@ -388,37 +387,13 @@ class LKDenseTracker(object):
 		print("Current Frame: ", self.current_frame)
 
 		self.foreground_points = zeros_like(self.flow)
+		self.background_points = self.flow
 
 		# Get average flow of each box
 		self.getAvgFlow()
 
 		# Find foreground from each box
 		self.getForeground()
-
-		# Bottom one third, left one third
-		# for x in range(int(self.height*2/3), self.height):
-		# 	for y in range(int(self.width/3)):
-		# 		if abs(self.flow[x,y,0] - avg_x_bot_l_corner) > 1 and abs(self.flow[x,y,1] - avg_y_bot_l_corner) > 0.5:
-		# 			self.foreground_points[x,y,1] = self.flow[x,y,1]
-		# # Bottom one third, middle one third
-		# for x in range(int(self.height*2/3), self.height):
-		# 	for y in range(int(self.width/3), int(self.width*2/3)):
-		# 		if abs(self.flow[x,y,0] - avg_x_bot_centre) > 1 and abs(self.flow[x,y,1] - avg_y_bot_centre) > 0.5:
-		# 			self.foreground_points[x,y,1] = self.flow[x,y,1]
-		# # Bottom one third, right one third
-		# for x in range(int(self.height*2/3), self.height):
-		# 	for y in range(int(self.width*2/3), self.width):
-		# 		if abs(self.flow[x,y,0] - avg_x_bot_r_corner) > 1 and abs(self.flow[x,y,1] - avg_y_bot_r_corner) > 0.5:
-		# 				self.foreground_points[x,y,1] = self.flow[x,y,1]
-
-				# if self.flow[x,y,0] <= (avg_delta_x_l_corner-1) or self.flow[x,y,0] >= (avg_delta_x_l_corner+1):
-				# 	if self.flow[x,y,0] <= (avg_delta_x_centre-1) or self.flow[x,y,0] >= (avg_delta_x_centre+1):
-				# 		if self.flow[x,y,0] <= (avg_delta_x_r_corner-1) or self.flow[x,y,0] >= (avg_delta_x_r_corner+1):
-				# 			if self.flow[x,y,1] <= (avg_delta_y_l_corner-1) or self.flow[x,y,1] >= (avg_delta_y_l_corner+1):
-				# 				if self.flow[x,y,1] <= (avg_delta_y_centre-1) or self.flow[x,y,1] >= (avg_delta_y_centre+1):
-				# 					if self.flow[x,y,1] <= (avg_delta_y_r_corner-1) or self.flow[x,y,1] >= (avg_delta_y_r_corner+1):
-				# 						self.foreground_points[x,y,1] = self.flow[x,y,1]
-		# print(self.foreground_points)
 
 
 	def getAvgFlow(self):
@@ -461,50 +436,65 @@ class LKDenseTracker(object):
 
 	def getForeground(self):
 
-		# Bottom fourth fifth, left first fifth
-		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, 1, self.width/5, self.avg_x_third_quart_l_corner, self.avg_y_third_quart_l_corner)
-		# Bottom fourth fifth, left second fifth
-		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, self.width/5, self.width*2/5, self.avg_x_third_quart_l_quart, self.avg_y_third_quart_l_quart)
-		# Bottom fourth fifth, middle
-		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, self.width*2/5, self.width*3/5, self.avg_x_third_quart_centre, self.avg_y_third_quart_centre)
-		# Bottom fourth fifth, right third fifth
-		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, self.width*3/5, self.width*4/5, self.avg_x_third_quart_r_quart, self.avg_y_third_quart_r_quart)
-		# Bottom fourth fifth, right last fifth
-		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, self.width*4/5, self.width, self.avg_x_third_quart_r_corner, self.avg_y_third_quart_r_corner)
+		# Criteria numbers
+		third  = 1.5
+		fourth = 2.5
+		last   = 2.75
 
+		# Bottom third row
+		criteria = third
+		# Bottom third fifth, left first fifth
+		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, 1, self.width/5, self.avg_x_third_quart_l_corner, self.avg_y_third_quart_l_corner, criteria+0.5, criteria+0.5)
+		# Bottom third fifth, left second fifth
+		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, self.width/5, self.width*2/5, self.avg_x_third_quart_l_quart, self.avg_y_third_quart_l_quart, criteria+0.25, criteria+0.2)
+		# Bottom third fifth, middle
+		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, self.width*2/5, self.width*3/5, self.avg_x_third_quart_centre, self.avg_y_third_quart_centre, criteria, criteria)
+		# Bottom third fifth, right third fifth
+		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, self.width*3/5, self.width*4/5, self.avg_x_third_quart_r_quart, self.avg_y_third_quart_r_quart, criteria+0.25, criteria+0.2)
+		# Bottom third fifth, right last fifth
+		self.getForegroundObjectsAtBox(self.height*2/5, self.height*3/5, self.width*4/5, self.width, self.avg_x_third_quart_r_corner, self.avg_y_third_quart_r_corner, criteria+0.5, criteria+0.5)
+
+		# Bottom fourth row
+		criteria = fourth
 		# # Bottom fourth fifth, left first fifth
-		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, 1, self.width/5, self.avg_x_four_quart_l_corner, self.avg_y_four_quart_l_corner)
+		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, 1, self.width/5, self.avg_x_four_quart_l_corner, self.avg_y_four_quart_l_corner, criteria+0.5, criteria+0.5)
 		# Bottom fourth fifth, left second fifth
-		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, self.width/5, self.width*2/5, self.avg_x_four_quart_l_quart, self.avg_y_four_quart_l_quart)
+		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, self.width/5, self.width*2/5, self.avg_x_four_quart_l_quart, self.avg_y_four_quart_l_quart, criteria+0.25, criteria+0.2)
 		# Bottom fourth fifth, middle
-		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, self.width*2/5, self.width*3/5, self.avg_x_four_quart_centre, self.avg_y_four_quart_centre)
+		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, self.width*2/5, self.width*3/5, self.avg_x_four_quart_centre, self.avg_y_four_quart_centre, criteria, criteria)
 		# Bottom fourth fifth, right third fifth
-		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, self.width*3/5, self.width*4/5, self.avg_x_four_quart_r_quart, self.avg_y_four_quart_r_quart)
+		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, self.width*3/5, self.width*4/5, self.avg_x_four_quart_r_quart, self.avg_y_four_quart_r_quart, criteria+0.25, criteria+0.2)
 		# Bottom fourth fifth, right last fifth
-		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, self.width*4/5, self.width, self.avg_x_four_quart_r_corner, self.avg_y_four_quart_r_corner)
+		self.getForegroundObjectsAtBox(self.height*3/5, self.height*4/5, self.width*4/5, self.width, self.avg_x_four_quart_r_corner, self.avg_y_four_quart_r_corner, criteria+0.5, criteria+0.5)
 
+		# Bottom fourth row
+		criteria = last
 		# Bottom last fifth, left first fifth
-		self.getForegroundObjectsAtBox(self.height*4/5, self.height, 1, self.width/5, self.avg_x_bot_l_corner, self.avg_y_bot_l_corner)
+		self.getForegroundObjectsAtBox(self.height*4/5, self.height, 1, self.width/5, self.avg_x_bot_l_corner, self.avg_y_bot_l_corner, criteria+0.75, criteria+0.75)
 		# Bottom last fifth, left second fifth
-		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width/5, self.width*2/5, self.avg_x_bot_l_quart, self.avg_y_bot_l_quart)
+		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width/5, self.width*2/5, self.avg_x_bot_l_quart, self.avg_y_bot_l_quart, criteria+0.25, criteria+0.25)
 		# Bottom last fifth, middle
-		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width*2/5, self.width*3/5, self.avg_x_bot_centre, self.avg_y_bot_centre)
+		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width*2/5, self.width*3/5, self.avg_x_bot_centre, self.avg_y_bot_centre, criteria, criteria)
 		# Bottom last fifth, right third fifth
-		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width*3/5, self.width*4/5, self.avg_x_bot_r_quart, self.avg_y_bot_r_quart)
+		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width*3/5, self.width*4/5, self.avg_x_bot_r_quart, self.avg_y_bot_r_quart, criteria+0.25, criteria+0.25)
 		# Bottom last fifth, right last fifth
-		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width*4/5, self.width, self.avg_x_bot_r_corner, self.avg_y_bot_r_corner)
+		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width*4/5, self.width, self.avg_x_bot_r_corner, self.avg_y_bot_r_corner, criteria+0.75, criteria+0.75)
 
 
-	def getForegroundObjectsAtBox(self, x1, x2, y1, y2, flow_x, flow_y):
+	def getForegroundObjectsAtBox(self, x1, x2, y1, y2, flow_x, flow_y, criteria_x, criteria_y):
 		for x in range(int(x1), int(x2)):
 			for y in range(int(y1), int(y2)):
-				if abs(self.flow[x,y,0] - flow_x) < 1 and abs(self.flow[x,y,1] - flow_y) < 1:
+				if abs(self.flow[x,y,0] - flow_x) < 0.5 and abs(self.flow[x,y,1] - flow_y) < 0.5:
 					self.foreground_points[x,y,0] = -1
 					self.foreground_points[x,y,1] = -1
-				if abs(self.flow[x,y,0] - flow_x) > 2 or abs(self.flow[x,y,1] - flow_y) > 2:
+				if abs(self.flow[x,y,0] - flow_x) > criteria_x or abs(self.flow[x,y,1] - flow_y) > criteria_y:
 					if self.foreground_points[x,y,0] != -1 or self.foreground_points[x,y,1] != -1:
+						# Get foreground points
 						self.foreground_points[x,y,0] = self.flow[x,y,0]
 						self.foreground_points[x,y,1] = self.flow[x,y,1]
+						# Remove foreground points from background points
+						self.background_points[x,y,0] = 0
+						self.background_points[x,y,1] = 0
 				else:
 					self.foreground_points[x,y,0] = 0
 					self.foreground_points[x,y,1] = 0
@@ -741,11 +731,3 @@ class LKDenseTracker(object):
 			if k == 27:
 				print(self.tracks)
 				break
-
-
-# Unfinished code for background velocity calculation
-# flow = cv2.calcOpticalFlowFarneback(self.prev_gray,self.gray,None,0.5,3,15,3,5,1.2,0)
-# length =  sqrt(dx**2 + dy**2)
-# totalLength = length(prev1[y,x]) + length(prev2[y+prev1[y,x][1], prev2[x+prev1[y,x]][0]]) ....
-# disp = (x,y) + prev1[y,x] + prev2[y,x] ...
-# speed = disp / t
