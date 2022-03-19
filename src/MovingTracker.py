@@ -5,8 +5,6 @@ import math
 import matplotlib.pyplot as plt
 from mpl_toolkits import mplot3d
 
-from numpy import zeros_like
-
 
 class LKDenseTracker(object):
 	""" Class for Lucas-Kanade tracking with
@@ -68,7 +66,7 @@ class LKDenseTracker(object):
 		self.height     = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 		self.fps        = int(self.capture.get(cv2.CAP_PROP_FPS))
-		self.writer1    = cv2.VideoWriter('drone_track.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
+		self.writer1    = cv2.VideoWriter('track_w_vanish_point.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
 		self.writer2    = cv2.VideoWriter('bg_flow.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, int(self.height)))#/4*3)))
 		__, self.frame  = self.capture.read()
 
@@ -299,13 +297,16 @@ class LKDenseTracker(object):
 		cv2.imshow("mask", self.object_mask)
 	
 
+	"""New code begins here"""
+
 	def FlowTrackFB(self):
-		"""Track the background flow with Farneback Optical Flow"""
+		"""Track the scene flow with Farneback Optical Flow"""
 
 		# Update mask used for background
 		# self.BGMaskUpdate()
 
 		__, self.frame  = self.capture.read()
+		self.line_list = []
 		# image = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
 		# pixel_values = image.reshape((-1, 3))
 		# print(pixel_values)
@@ -314,10 +315,10 @@ class LKDenseTracker(object):
 		self.gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
 
 		# Set the ROI for bg flow
-		x1 = 0
-		y1 = 0 #int(self.height/4)
-		x2 = int(self.width)
-		y2 = int(self.height)
+		# x1 = 0
+		# y1 = 0 #int(self.height/4)
+		# x2 = int(self.width)
+		# y2 = int(self.height)
 
 		# Farneback
 		# current_frame = cv2.cvtColor(self.frame_two, cv2.COLOR_BGR2GRAY)
@@ -338,26 +339,34 @@ class LKDenseTracker(object):
 		height = 20
 		ang_vel = 0
 
+		self.frame_out = self.frame
 		self.foregroundDetect()
+		self.getFlowLines()
+
+		if self.line_list:
+			# If lines exist, get vanishing point
+			self.min_x, self.min_y = self.getVanishingPoint(self.line_list)
+			self.frame_out = cv2.circle(self.frame_out, (int(self.min_x), int(self.min_y)),5,(255,255,0),-1)
+
 		# self.detectKCluster()
-
-		
-
 
 
 		
 		## Old
 		# self.flow = cv2.calcOpticalFlowFarneback(self.prev_drawing,self.drawing,None,0.5,3,15,3,5,1.2,0)
 		# Compute magnitude and angle of 2D vector
-		mag, ang = cv2.cartToPolar(self.foreground_points[..., 0], self.foreground_points[..., 1])
+		self.mag, ang = cv2.cartToPolar(self.foreground_points[..., 0], self.foreground_points[..., 1])
 		# Set image hue value according to the angle of optical flow
 		self.hsv_mask[..., 0] = ang * 180 / math.pi / 2
 		# Set value as per the normalized magnitude of optical flow
-		self.hsv_mask[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+		self.hsv_mask[..., 2] = cv2.normalize(self.mag, None, 0, 255, cv2.NORM_MINMAX)
 		# Convert to rgb
-		rgb_representation = cv2.cvtColor(self.hsv_mask, cv2.COLOR_HSV2BGR)
-		cv2.imshow('flow', rgb_representation)
-		cv2.imshow("frame", self.frame)
+		self.rgb_representation = cv2.cvtColor(self.hsv_mask, cv2.COLOR_HSV2BGR)
+		
+		self.out = cv2.add(self.frame_out,self.flow_line_mask)
+		self.blobDetector()
+		cv2.imshow('flow', self.rgb_representation)
+		cv2.imshow("frame", self.out)
 
 		# # Get start and end coordinates of the optical flow
 		# self.flow_start = np.stack(np.meshgrid(range(self.flow.shape[1]), range(self.flow.shape[0])), 2)
@@ -380,20 +389,22 @@ class LKDenseTracker(object):
 	
 		# cv2.imshow('flow', rgb_representation)
 		# cv2.imshow('frame', self.frame)
-		self.writer2.write(rgb_representation)
+
+		self.writer1.write(self.out)
+		self.writer2.write(self.rgb_representation)
 
 	
 	def foregroundDetect(self):
 		print("Current Frame: ", self.current_frame)
 
-		self.foreground_points = zeros_like(self.flow)
+		self.foreground_points = np.zeros_like(self.flow)
 		self.background_points = self.flow
 
 		# Get average flow of each box
 		self.getAvgFlow()
 
 		# Find foreground from each box
-		self.getForeground()
+		self.splitFGAndBG()
 
 
 	def getAvgFlow(self):
@@ -420,21 +431,21 @@ class LKDenseTracker(object):
 		self.avg_x_bot_r_corner, self.avg_y_bot_r_corner = self.calculateFlowAtPoint(self.height*9/10-10, self.height*9/10+10, self.width*9/10-5, self.width*9/10+5)
 
 
-	def calculateFlowAtPoint(self, x1, x2, y1, y2):
+	def calculateFlowAtPoint(self, y1, y2, x1, x2):
 		avg_x = 0
 		avg_y = 0
 		count = 0
-		for x in range(int(x1), int(x2)):
-			for y in range(int(y1),int(y2)):
-				avg_x += self.flow[x,y,0]
-				avg_y += self.flow[x,y,1]
+		for y in range(int(y1), int(y2)):
+			for x in range(int(x1),int(x2)):
+				avg_x += self.flow[y,x,0]
+				avg_y += self.flow[y,x,1]
 				count += 1
 		avg_x /= count
 		avg_y /= count
 		return avg_x, avg_y
 
 
-	def getForeground(self):
+	def splitFGAndBG(self):
 
 		# Criteria numbers
 		third  = 1.5
@@ -481,23 +492,127 @@ class LKDenseTracker(object):
 		self.getForegroundObjectsAtBox(self.height*4/5, self.height, self.width*4/5, self.width, self.avg_x_bot_r_corner, self.avg_y_bot_r_corner, criteria+0.75, criteria+0.75)
 
 
-	def getForegroundObjectsAtBox(self, x1, x2, y1, y2, flow_x, flow_y, criteria_x, criteria_y):
-		for x in range(int(x1), int(x2)):
-			for y in range(int(y1), int(y2)):
-				if abs(self.flow[x,y,0] - flow_x) < 0.5 and abs(self.flow[x,y,1] - flow_y) < 0.5:
-					self.foreground_points[x,y,0] = -1
-					self.foreground_points[x,y,1] = -1
-				if abs(self.flow[x,y,0] - flow_x) > criteria_x or abs(self.flow[x,y,1] - flow_y) > criteria_y:
-					if self.foreground_points[x,y,0] != -1 or self.foreground_points[x,y,1] != -1:
-						# Get foreground points
-						self.foreground_points[x,y,0] = self.flow[x,y,0]
-						self.foreground_points[x,y,1] = self.flow[x,y,1]
+	def getForegroundObjectsAtBox(self, y1, y2, x1, x2, flow_x, flow_y, criteria_x, criteria_y):
+		for y in range(int(y1), int(y2)):
+			for x in range(int(x1), int(x2)):
+				if abs(self.flow[y,x,0] - flow_x) < 0.5 and abs(self.flow[y,x,1] - flow_y) < 0.5:
+					self.foreground_points[y,x,0] = -1
+					self.foreground_points[y,x,1] = -1
+				if abs(self.flow[y,x,0] - flow_x) > criteria_x or abs(self.flow[y,x,1] - flow_y) > criteria_y:
+					if self.foreground_points[y,x,0] != -1 or self.foreground_points[y,x,1] != -1:
+						# Get foreground points and add it to self.foreground_points
+						self.foreground_points[y,x,0] = self.flow[y,x,0]
+						self.foreground_points[y,x,1] = self.flow[y,x,1]
 						# Remove foreground points from background points
-						self.background_points[x,y,0] = 0
-						self.background_points[x,y,1] = 0
+						self.background_points[y,x,0] = 0
+						self.background_points[y,x,1] = 0
 				else:
-					self.foreground_points[x,y,0] = 0
-					self.foreground_points[x,y,1] = 0
+					self.foreground_points[y,x,0] = 0
+					self.foreground_points[y,x,1] = 0
+
+	def getFlowLines(self):
+		"""Plot the flow lines and output them onto frame if needed"""
+		self.flow_line_mask  = np.zeros_like(self.frame)
+		for x in range(100, self.width, 100):
+			for y in range(100, self.height, 100):
+				# print(y,x)
+				new_x = x - self.background_points[y,x,0]
+				new_y = y - self.background_points[y,x,1]
+				
+				if abs(self.background_points[y,x,0]) < 1 or abs(self.background_points[y,x,1]) < 1:
+					new_x = 0
+					new_y = 0
+				
+				if new_x != 0 or new_y != 0:
+					#Comment out the next line if output of flow lines not needed
+					self.flow_line_mask = cv2.line(self.flow_line_mask, (x,y),(int(new_x),int(new_y)), (255,255,0), 1)
+					# Get the line equation and add to the list
+					# y = mx + b
+					m = self.background_points[y,x,1]/self.background_points[y,x,0]
+					b = y - m*x
+					self.line_list.append([m,b])
+
+
+	def getVanishingPoint(self, line_equation):
+		"""Obtained from KEDIARAHUL135 on GitHub (https://github.com/KEDIARAHUL135/VanishingPoint)"""
+		# We will apply RANSAC inspired algorithm for this. We will take combination 
+		# of 2 lines one by one, find their intersection point, and calculate the 
+		# total error(loss) of that point. Error of the point means root of sum of 
+		# squares of distance of that point from each line.
+		vanishing_point = None
+		min_error = 1000000000000
+
+		for i in range(len(line_equation)):
+			for j in range(i+1, len(line_equation)):
+				m1, b1 = line_equation[i][0], line_equation[i][1]
+				m2, b2 = line_equation[j][0], line_equation[j][1]
+
+				if m1 != m2:
+					x0 = (b1 - b2) / (m2 - m1)
+					y0 = m1 * x0 + b1
+
+					error = 0
+					for k in range(len(line_equation)):
+						m, b = line_equation[k][0], line_equation[k][1]
+						m_ = (-1 / m)
+						b_ = y0 - m_ * x0
+
+						x_ = (b - b_) / (m_ - m)
+						y_ = m_ * x_ + b_
+
+						l = np.sqrt((y_ - y0)**2 + (x_ - x0)**2)
+
+						error += l**2
+
+					error = np.sqrt(error)
+
+					if min_error > error:
+						min_error = error
+						vanishing_point = [x0, y0]			
+		return vanishing_point
+
+
+	def blobDetector(self):
+		"""Draws box around detected target"""
+
+		gray_image = self.gray.copy()
+		gray_image[self.mag < 1] = 0
+
+		# get contours
+		# result = img.copy()
+		(ret, thresh) = cv2.threshold(gray_image, 60, 255, cv2.THRESH_BINARY)
+		contours = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+		contours = contours[0] if len(contours) == 2 else contours[1]
+		num_target = 0
+		for cntr in contours:
+			rect = cv2.boundingRect(cntr)
+			if rect[2] < 10 or rect[3] < 10: continue
+			x,y,w,h = rect
+			cv2.rectangle(self.out, (x, y), (x+w, y+h), (0, 0, 255), 2)
+			num_target += 1
+
+		text = "Number of targets: " + str(num_target)
+		cv2.putText(self.out, text, (10, 50),cv2.FONT_HERSHEY_COMPLEX_SMALL, 0.8, (0, 0, 0), 2)
+
+		# show thresh and result    
+		# cv2.imshow("bounding_box", self.frame_out)
+
+
+
+		# detector = cv2.SimpleBlobDetector_create(params)
+		# # gray_image = cv2.cvtColor(self.rgb_representation, cv2.COLOR_BGR2GRAY)
+		# (ret, thresh) = cv2.threshold(gray_image, 60, 255, cv2.THRESH_BINARY)
+		# cv2.imshow("thresh",thresh)
+
+		# keypoints = detector.detect(thresh)
+
+		# # blank = np.zeros((1, 1))
+		# blank = np.array([])
+		# self.blob = cv2.drawKeypoints(self.out, keypoints, blank, (0, 0, 255),cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+		# cv2.imshow("blob",self.blob)
+		# number_of_blobs = len(keypoints)
+		# text = "Number of targets: " + str(number_of_blobs)
+
 
 
 	def detectKCluster(self):
