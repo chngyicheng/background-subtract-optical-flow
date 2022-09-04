@@ -5,15 +5,15 @@ import MovingTracker
 # import matplotlib.pyplot as plt
 import cv2
 
-imnames = 'DJI_004.mp4'
+imnames = 'DJI_005.mp4'
 
 # Track using the LKTracker generator
-lkt = MovingTracker.LKDenseTracker(imnames)
+lkt = MovingTracker.Detect(imnames)
 for i, f in lkt.track():
     continue
 
 cv2.destroyAllWindows()
 # video_lktrackHSV.LKTracker.capture.release()
 # video_lktrackHSV.LKTracker.writer.release()
-MovingTracker.LKDenseTracker.capture.release()
-MovingTracker.LKDenseTracker.writer.release()
+MovingTracker.Detect.capture.release()
+MovingTracker.Detect.writer.release()

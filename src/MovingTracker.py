@@ -3,10 +3,9 @@ import numpy as np
 import copy
 import math
 import matplotlib.pyplot as plt
-from mpl_toolkits import mplot3d
 
 
-class LKDenseTracker(object):
+class Detect(object):
 	""" Class for Lucas-Kanade tracking with
 	dense optical flow"""
 
@@ -18,7 +17,6 @@ class LKDenseTracker(object):
 		self.tracks          = []
 		self.vel_orient      = []
 		self.current_frame   = 0
-		self.detect_interval = 3
 		self.dx              = 0
 		self.dy              = 0
 		self.velocity        = [0, 0, 0]
@@ -35,30 +33,9 @@ class LKDenseTracker(object):
 		## Create some random colors
 		self.color = np.random.randint(0,255,(100,3))
 
-		## Lucas-Kanade optical flow params
-		self.lk_params     = dict(winSize=(15,15), maxLevel=2, criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,10,0.03))
-		self.subpix_params = dict(zeroZone=(-1,-1), winSize=(10,10), criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS,20,0.03))
-		
-		## Shi-Tomasi corner detection params
-		self.feature_params = dict(maxCorners=5, qualityLevel=0.001, minDistance=50, blockSize=20)
 
-		# For thresholding
-		self.threshold         = 60  # BINARY threshold
-		self.blurValue         = 7   # GaussianBlur parameter
-		self.bgSubThreshold    = 50
-		self.learningRate      = 0.003
-		self.bgModel           = None
-		self.min_detect_frames = 10
-
-		# Initialise flags
-		self.isBgCaptured   = False   # whether the background captured
-		self.objectDetected = False
-		self.bgFlowInit     = False
-		
-
-	def detectPoints(self):
-		"""Detect 'Good features to track' (corners)
-		in current frame using sub-pixel accuracy"""
+	def initCVParams(self):
+		"""Initialise CV2 video params"""
 
 		# Load image and threshold image
 		self.capture    = cv2.VideoCapture(self.imnames)
@@ -66,29 +43,11 @@ class LKDenseTracker(object):
 		self.height     = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 		self.fps        = int(self.capture.get(cv2.CAP_PROP_FPS))
-		self.writer1    = cv2.VideoWriter('track_w_vanish_point.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
-		self.writer2    = cv2.VideoWriter('bg_flow.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, int(self.height)))#/4*3)))
+
+		# Write output video to new file
+		self.writer1    = cv2.VideoWriter('OBJECT_TRACK_WITH_VANISHING_POINT.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, self.height))
+		self.writer2    = cv2.VideoWriter('FARNEBACK_FOREGROUND_FLOW.mp4', cv2.VideoWriter_fourcc(*'XVID'),25, (self.width, int(self.height)))#/4*3)))
 		__, self.frame  = self.capture.read()
-
-		# for i in range(self.min_detect_frames):
-		# 	__, self.frame = self.capture.read()
-		# 	self.bgThreshold()
-
-		# # Search for good points
-		# self.prev_features = cv2.goodFeaturesToTrack(self.drawing, **self.feature_params)
-
-		# # Refine the corner locations
-		# cv2.cornerSubPix(self.drawing, self.prev_features, **self.subpix_params)
-
-		# self.features = self.prev_features
-		# # print(self.features)
-		# self.frame_two = self.frame
-		# self.objectDetected = True
-		# self.tracks   = [[p] for p in self.prev_features.reshape((-1,2))]
-		
-		# self.prev_drawing = self.drawing
-		# self.frame_one    = self.frame_two
-		# cv2.imshow('test', self.prev_drawing)
 		
 		self.mask  = np.zeros_like(self.frame)
 		self.arrow = np.zeros_like(self.frame)
@@ -98,246 +57,19 @@ class LKDenseTracker(object):
 
 		self.prev_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
 
-		# self.draw()
-
-
-	def bgThreshold(self):
-		"""Main operation that runs thresholding
-		using HSV values and background subtraction"""
-
-		#  Apply smoothening filter over the frame
-		self.img = cv2.bilateralFilter(self.frame, 5, 50, 100)
-
-		# If background not captured, run background subtractor MOG2
-		if not self.isBgCaptured:
-			self.bgModel = cv2.createBackgroundSubtractorMOG2(600, self.bgSubThreshold, False)
-			self.isBgCaptured = True    # Updates that background has been captured
-			print( 'Background Captured')
-
-		# Set the HSV values (DJI Video 900+)
-		# h_low  = 0
-		# s_low  = 0
-		# v_low  = 103
-		# h_high = 61
-		# s_high = 65
-		# v_high = 255
-
-		# Set the HSV values (DJI Video 001)
-		h_low  = 0
-		s_low  = 18
-		v_low  = 103
-		h_high = 53
-		s_high = 60
-		v_high = 255
-
-		# If object (drone) has been detected, create a rectangle mask
-		# to focus on object, then creates new image of frame in HSV 
-		# with clearer image (parameters of thresholding) and removes BG
-		if self.objectDetected:
-			# Create rectangular mask to track object
-			self.FGMaskUpdate()
-			
-			# Update HSV value if object found
-			h_low  = 0
-			s_low  = 0
-			v_low  = 136
-			h_high = 180
-			s_high = 76
-			v_high = 255
-		
-		img_hsv  = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
-		img_blur = cv2.GaussianBlur(img_hsv, (self.blurValue, self.blurValue), 0)
-		# h, s, v  = cv2.split(img_blur)
-		
-		frame_threshold = cv2.inRange(img_blur, (h_low, s_low, v_low), (h_high, s_high, v_high))
-		frame_threshold = self.removeBG(frame_threshold)
-		# cv2.imshow('thresh',frame_threshold)
-
-		
-		if self.objectDetected:
-			# con_img = frame_threshold[x1:x2,y1:y2]
-			con_img = img_blur.copy()
-			con_img[self.object_mask == 0] = 0
-
-			# self.detect_img = self.img.copy()
-			# self.detect_img[self.object_mask == 0] = 0
-
-			con_img = cv2.inRange(img_blur, (h_low, s_low, v_low), (h_high, s_high, v_high))
-			# con_img = self.removeBG(con_img)
-			
-			# get contours
-			contours, hierarchy = cv2.findContours(con_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE) #detecting contours
-
-			self.area = cv2.contourArea(contours[0])
-
-		# cv2.imshow('th', frame_threshold)
-
-		drawing = self.img.copy()
-		drawing[frame_threshold == 0] = 0
-		self.drawing = cv2.cvtColor(drawing, cv2.COLOR_BGR2GRAY)
-
-
-	def FGMaskUpdate(self):
-		"""Update foreground mask to track object"""
-
-		# Create empty mask to track object
-		self.object_mask = [[0]*self.width]*self.height
-		self.object_mask = np.asarray(self.object_mask)
-		self.object_mask = self.object_mask.astype(np.uint8)
-
-		# Draw rectangle of opposing corners of (x1, y1), (x2, y2)
-		# if self.x1 > self.oldx1:
-		# 	x_diff = self
-		x1 = self.mask_x1 - int(abs(self.mask_x1-self.old_mask_x1)*2) - 25
-		y1 = self.mask_y1 - int(abs(self.mask_y1-self.old_mask_y1)*2) - 15
-		x2 = self.old_mask_x1 + int(abs(self.mask_x1-self.old_mask_x1)*2) + 25
-		y2 = self.old_mask_y1 + int(abs(self.mask_y1-self.old_mask_y1)*2) + 15
-		self.object_mask[y1:y2, x1:x2]  = 255
 
 	
-	def BGMaskUpdate(self):
-		"""Update background mask to track object"""
-
-		# Create mask of ones ignoring drone for background flow calculation
-		self.bg_flow_mask = [[1]*self.width]*self.height
-		self.bg_flow_mask = np.asarray(self.bg_flow_mask)
-		self.bg_flow_mask = self.bg_flow_mask.astype(np.uint8)
-
-		# Draw rectangle of opposing corners of (x1, y1), (x2, y2) and equate it
-		# to 0
-		# x1 = self.x1 - 55
-		# y1 = self.y1 - 35
-		# x2 = self.oldx1 + 55
-		# y2 = self.oldy1 + 35
-
-		x1 = 0
-		y1 = int(self.height)
-		x2 = int(self.width)
-		y2 = int(self.height/2)
-		self.bg_flow_mask[y1:y2, x1:x2] = 0
-
-		# gray_frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
-
-		# self.bg_flow_masked = gray_frame.copy()
-		# # self.bg_flow_mask[self.object_mask == 1] = 0
-		# self.bg_flow_masked[bg_flow_mask == 0] = 0
-
-		# cv2.imshow("bg flow", self.bg_flow_masked)
-
-
-	def removeBG(self, frame):
-		"""Subtracts the background"""
-
-		fgmask = self.bgModel.apply(frame,learningRate=self.learningRate)
-
-		kernel = np.ones((3, 3), np.uint8)
-		fgmask = cv2.erode(fgmask, kernel, iterations=1)
-		res = cv2.bitwise_and(frame, frame, mask=fgmask)
-		return res
-
-	
-	def checkPoints(self):
-		"""Re-detect 'Good features to track' (corners)
-		in current frame using sub-pixel accuracy"""
-		
-		
-
-		# # Search for good points
-		if self.current_frame > 5 and self.objectDetected:
-			self.color = np.random.randint(0,255,(100,3))
-			self.features = cv2.goodFeaturesToTrack(self.drawing, **self.feature_params, mask=self.object_mask)
-
-			# Refine the corner locations
-			# if np.all(cv2.cornerSubPix(self.drawing, self.features, **self.subpix_params) > 0):
-			# 	cv2.cornerSubPix(self.drawing, self.features, **self.subpix_params)
-			# else:
-			# 	self.features = self.prev_features
-			try:
-				cv2.cornerSubPix(self.drawing, self.features, **self.subpix_params)
-			except:
-				self.features = self.prev_features
-
-			cv2.imshow("drawing", self.drawing)
-
-		
-	def trackPointsLK(self):
-		"""Track the detected features"""
-
-		# Load the image and create grayscale
-		__, self.frame = self.capture.read()
-		self.frame_two = self.frame
-		# self.gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
-		self.bgThreshold()
-
-		# Re-checks detection every few frames
-		if self.current_frame % self.detect_interval == 0:
-			self.checkPoints()
-
-		# Reshape to fit input format
-		tmp = np.float32(self.features).reshape(-1, 1, 2)
-
-		self.prev_features = self.features
-		# Calculate optical flow
-		# self.bgThreshold()
-		self.features, status, track_error = cv2.calcOpticalFlowPyrLK(self.prev_drawing, self.drawing, tmp, None, **self.lk_params)
-
-		self.FlowTrackFB()
-
-		self.dx += (self.features[0][0][0] - self.prev_features[0][0][0]) #/ (1/self.fps)
-		self.dy -= (self.features[0][0][1] - self.prev_features[0][0][1])# / (1/self.fps)
-		self.draw()
-
-		# Update all prev to current
-		self.prev_area    = self.area
-		self.prev_drawing = self.drawing
-		self.frame_one    = self.frame_two
-
-		self.current_frame += 1
-		# cv2.imshow("input", self.drawing)
-		cv2.imshow("mask", self.object_mask)
-	
-
 	"""New code begins here"""
 
 	def FlowTrackFB(self):
 		"""Track the scene flow with Farneback Optical Flow"""
 
-		# Update mask used for background
-		# self.BGMaskUpdate()
-
 		__, self.frame  = self.capture.read()
 		self.line_list = []
-		# image = cv2.cvtColor(self.frame, cv2.COLOR_BGR2RGB)
-		# pixel_values = image.reshape((-1, 3))
-		# print(pixel_values)
-		# return
 
 		self.gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
 
-		# Set the ROI for bg flow
-		# x1 = 0
-		# y1 = 0 #int(self.height/4)
-		# x2 = int(self.width)
-		# y2 = int(self.height)
-
-		# Farneback
-		# current_frame = cv2.cvtColor(self.frame_two, cv2.COLOR_BGR2GRAY)
-		# prev_frame    = cv2.cvtColor(self.frame_one, cv2.COLOR_BGR2GRAY)
-
-		# current_frame = current_frame[y1:y2, x1:x2]
-		# prev_frame    = prev_frame[y1:y2, x1:x2]
-
-		# LK Tracker
-		# current_frame = self.frame_two[y1:y2, x1:x2]
-		# prev_frame    = self.frame_one[y1:y2, x1:x2]
-
-		## Test code
-		# self.flow = cv2.optflow.calcOpticalFlowSparseToDense(prev_frame, current_frame, None)
 		self.flow = cv2.calcOpticalFlowFarneback(self.prev_gray,self.gray,None,0.5,3,15,3,5,1.2,0)
-		# self.flow = cv2.calcOpticalFlowPyrLK(self.prev_gray, self.gray, None, None, **self.lk_params)
-		focal_length = 0.00449
-		height = 20
-		ang_vel = 0
 
 		self.frame_out = self.frame
 		self.foregroundDetect()
@@ -348,12 +80,6 @@ class LKDenseTracker(object):
 			self.min_x, self.min_y = self.getVanishingPoint(self.line_list)
 			self.frame_out = cv2.circle(self.frame_out, (int(self.min_x), int(self.min_y)),5,(255,255,0),-1)
 
-		# self.detectKCluster()
-
-
-		
-		## Old
-		# self.flow = cv2.calcOpticalFlowFarneback(self.prev_drawing,self.drawing,None,0.5,3,15,3,5,1.2,0)
 		# Compute magnitude and angle of 2D vector
 		self.mag, ang = cv2.cartToPolar(self.foreground_points[..., 0], self.foreground_points[..., 1])
 		# Set image hue value according to the angle of optical flow
@@ -368,33 +94,16 @@ class LKDenseTracker(object):
 		cv2.imshow('flow', self.rgb_representation)
 		cv2.imshow("frame", self.out)
 
-		# # Get start and end coordinates of the optical flow
-		# self.flow_start = np.stack(np.meshgrid(range(self.flow.shape[1]), range(self.flow.shape[0])), 2)
-		# self.flow_end = (self.flow[self.flow_start[:,:,1],self.flow_start[:,:,0],:1]*3 + self.flow_start).astype(np.int32)
-
-		# Calculate optical flow
-
-
-
-		# Threshold values
-		# norm = np.linalg.norm(self.flow_end - self.flow_start, axis=2)
-		# norm[norm < 2] = 0
-
-		# self.nz = np.nonzero(norm)
-		
 		# Update all prev to current
 		self.prev_flow = self.flow
 		self.prev_gray = self.gray
-		# self.frame_one = self.frame_two
-	
-		# cv2.imshow('flow', rgb_representation)
-		# cv2.imshow('frame', self.frame)
 
 		self.writer1.write(self.out)
 		self.writer2.write(self.rgb_representation)
 
 	
 	def foregroundDetect(self):
+		"""Start the process of splitting foreground and background pixels"""
 		print("Current Frame: ", self.current_frame)
 
 		self.foreground_points = np.zeros_like(self.flow)
@@ -408,6 +117,7 @@ class LKDenseTracker(object):
 
 
 	def getAvgFlow(self):
+		"""Segment the video into 3x5 ignoring first 2 rows. Get average of centre pixels and assume to be bg flow (TODO: Edit to make dynamic)."""
 		
 		# Average for bottom third fifth, left first fifth
 		self.avg_x_third_quart_l_corner, self.avg_y_third_quart_l_corner = self.calculateFlowAtPoint(self.height/2-10, self.height/2+10, self.width/10-5, self.width/10+5)
@@ -432,6 +142,7 @@ class LKDenseTracker(object):
 
 
 	def calculateFlowAtPoint(self, y1, y2, x1, x2):
+		"""Calculate avg flow of pixels selected"""
 		avg_x = 0
 		avg_y = 0
 		count = 0
@@ -446,8 +157,9 @@ class LKDenseTracker(object):
 
 
 	def splitFGAndBG(self):
+		"""Based on a threshhold value of '+-criteria value', split into foreground and background. Repeat for each segmented box."""
 
-		# Criteria numbers
+		# Criteria numbers for thresholding of pixels
 		third  = 1.5
 		fourth = 2.5
 		last   = 2.75
@@ -493,6 +205,8 @@ class LKDenseTracker(object):
 
 
 	def getForegroundObjectsAtBox(self, y1, y2, x1, x2, flow_x, flow_y, criteria_x, criteria_y):
+		"""Use threshold value to split fg and bg"""
+
 		for y in range(int(y1), int(y2)):
 			for x in range(int(x1), int(x2)):
 				if abs(self.flow[y,x,0] - flow_x) < 0.5 and abs(self.flow[y,x,1] - flow_y) < 0.5:
@@ -510,8 +224,10 @@ class LKDenseTracker(object):
 					self.foreground_points[y,x,0] = 0
 					self.foreground_points[y,x,1] = 0
 
+
 	def getFlowLines(self):
 		"""Plot the flow lines and output them onto frame if needed"""
+
 		self.flow_line_mask  = np.zeros_like(self.frame)
 		for x in range(100, self.width, 100):
 			for y in range(100, self.height, 100):
@@ -535,6 +251,7 @@ class LKDenseTracker(object):
 
 	def getVanishingPoint(self, line_equation):
 		"""Obtained from KEDIARAHUL135 on GitHub (https://github.com/KEDIARAHUL135/VanishingPoint)"""
+
 		# We will apply RANSAC inspired algorithm for this. We will take combination 
 		# of 2 lines one by one, find their intersection point, and calculate the 
 		# total error(loss) of that point. Error of the point means root of sum of 
@@ -594,112 +311,11 @@ class LKDenseTracker(object):
 		text = "Number of targets: " + str(num_target)
 		cv2.putText(self.out, text, (10, 50),cv2.FONT_HERSHEY_COMPLEX_SMALL, 0.8, (0, 0, 0), 2)
 
-		# show thresh and result    
-		# cv2.imshow("bounding_box", self.frame_out)
-
-
-
-		# detector = cv2.SimpleBlobDetector_create(params)
-		# # gray_image = cv2.cvtColor(self.rgb_representation, cv2.COLOR_BGR2GRAY)
-		# (ret, thresh) = cv2.threshold(gray_image, 60, 255, cv2.THRESH_BINARY)
-		# cv2.imshow("thresh",thresh)
-
-		# keypoints = detector.detect(thresh)
-
-		# # blank = np.zeros((1, 1))
-		# blank = np.array([])
-		# self.blob = cv2.drawKeypoints(self.out, keypoints, blank, (0, 0, 255),cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-		# cv2.imshow("blob",self.blob)
-		# number_of_blobs = len(keypoints)
-		# text = "Number of targets: " + str(number_of_blobs)
-
-
-
-	def detectKCluster(self):
-		k = 3
-		criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
-		foreground = self.foreground_points.reshape((-1,3))
-		_, labels, (centers) = cv2.kmeans(foreground, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-
-		# convert back to 8 bit values
-		centers = np.uint8(centers)
-
-		# flatten the labels array
-		labels = labels.flatten()
-
-		# convert all pixels to the color of the centroids
-		segmented_image = centers[labels.flatten()]
-		segmented_image = segmented_image.reshape(self.foreground_points.shape)
-
-
-		""" PROGRESS TILL HERE"""
-		# cv2.imshow("segment", segmented_image)
-		# plt.imshow(segmented_image)
-		# plt.show()
-
-		# Compute magnitude and angle of 2D vector
-		# mag, ang = cv2.cartToPolar(segmented_image[..., 0], segmented_image[..., 1])
-		# # Set image hue value according to the angle of optical flow
-		# self.hsv_mask[..., 0] = ang * 180 / math.pi / 2
-		# # Set value as per the normalized magnitude of optical flow
-		# self.hsv_mask[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
-		# # Convert to rgb
-		# rgb_representation = cv2.cvtColor(self.hsv_mask, cv2.COLOR_HSV2BGR)
-		# cv2.imshow('flow', rgb_representation)
-
-		# disable only the cluster number 2 (turn the pixel into black)
-		masked_image = np.copy(self.flow)
-		# masked_image[..., 2] = self.current_frame/60
-
-		# masked_image[..., 0] = segmented_image[..., 0]
-		# masked_image[..., 1] = segmented_image[..., 1]
-		# convert to the shape of a vector of pixel values
-		masked_image = masked_image.reshape((-1, 3))
-		# color (i.e cluster) to disable
-		# cluster = 1
-		# masked_image[labels != cluster] = 0
-		cluster = 2
-		masked_image[labels == cluster] = 255
-		
-		# masked_image[labels == cluster] = [0, 0, 0]
-		# convert back to original shape
-		masked_image = masked_image.reshape(self.flow.shape)
-
-		# print(masked_image)
-
-		# Compute magnitude and angle of 2D vector
-		mag, ang = cv2.cartToPolar(self.foreground_points[..., 0], self.foreground_points[..., 1])
-		# Set image hue value according to the angle of optical flow
-		self.hsv_mask[..., 0] = ang * 180 / math.pi / 2
-		# Set value as per the normalized magnitude of optical flow
-		self.hsv_mask[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
-		# Convert to rgb
-		rgb_representation = cv2.cvtColor(self.hsv_mask, cv2.COLOR_HSV2BGR)
-		cv2.imshow('flow', rgb_representation)
-		cv2.imshow("frame", self.frame)
-		self.writer2.write(rgb_representation)
-
-
-		print("it works", self.current_frame)
-		# plt.imshow(masked_image)
-		# ax = plt.axes(projection='3d')
-
-		# Data for a three-dimensional line
-		# zline = np.linspace(0, 15, 1000)
-		# xline = np.sin(zline)
-		# yline = np.cos(zline)
-		# ax.plot3D(xline, yline, zline, 'gray')
-
-		# Data for three-dimensional scattered points
-		# zdata = 15 * np.random.random(100)
-		# xdata = masked_image
-		# ydata = np.cos(zdata) + 0.1 * np.random.randn(100)
-		# ax.scatter3D(xdata, ydata, zdata, c=zdata, cmap='Greens')
-		# plt.show()
-
 
 
 	def draw(self):
+		### NOT IN USE CURRENTLY, IMPLEMENTED WITH PREVIOUS FYP METHOD OF LUCAS-KANADE TO ESTIMATE SPEED
+		### TO BE INTEGRATED INTO FARNEBACK METHOD AFTER FINDING GOOD VELOCITY ESTIMATION ALGORITHM
 		"""
 		Draw the current image with points using OpenCV's
 		own drawing functions. Press any key to close window
@@ -767,10 +383,6 @@ class LKDenseTracker(object):
 		
 		self.writer1.write(self.out)
 		cv2.imshow('LKtrack', self.out)
-		# print(self.fps)
-
-	# def calc3DPose(self):
-	# 	self.dy = 0
 		
 
 	"""
@@ -832,16 +444,15 @@ class LKDenseTracker(object):
 
 
 	def track(self):
-		"""Generator for stepping through a sequence"""
+		"""Generator for stepping through video frames"""
 
 		while(1):
 			if self.current_frame == 0:
-				self.detectPoints()
+				self.initCVParams()
 			else:
 				self.FlowTrackFB()
 			
 			self.current_frame += 1
-			# cv2.imshow('LKtrack', self.out)
 			k = cv2.waitKey(30) & 0xff
 			if k == 27:
 				print(self.tracks)
