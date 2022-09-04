@@ -1,4 +1,4 @@
-# Moving Object Detection in Moving Monocular Camera: Background Subtraction and Foreground Object Detection using Farneback Optical Flow
+# Moving Object Detection with a Moving Monocular Camera using Optical Flow
 
 This project was my Final Year Project in the National University of Singapore. Many functionalities are still not present and are to be added in the future. A legacy file of using the Lucas-Kanade Optical Flow has also been left in the `src/` directory for future reference and experimentation.
 
