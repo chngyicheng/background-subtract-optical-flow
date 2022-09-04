@@ -4,13 +4,15 @@ This project was my Final Year Project in the National University of Singapore. 
 
  
 ## Overview
-This repository attempts to segment the foreground from the background in post-processing using OpenCV's Farneback Optical flow. This method works by:
+This repository attempts to subtract and separate the foreground from the background in post-processing using OpenCV's Farneback Optical flow. This works by the following methods:
 
-1. Splitting the video input into a set of 5 x 5 boxes, whilst ignoring the top two rows by taking the assumption of it being the sky.
+1. The video input is split into a set of 5 x 5 boxes, then assuming the top two rows of the video feed being the sky and ignoring it to increase computational speed.
 
-2. The average optical flow of each box is then calculated and assumed to be the background. The pixels' optical flow magnitudes and directions are then compared to this average, and if the pixels fall outside of a certain threshold value, it is taken to be the foreground (because it is NOT the background).
+2. The average optical flow of each box is then calculated and assumed to be the background. 
 
-3. For future implementations' sake, the background flow directions are then extrapolated to obtain the vanishing point (camera's moving direction). This could prove useful for obtaining heading direction in the future.
+3. Each pixels' optical flow magnitudes and directions are then compared to this average, and if the pixels fall outside of a certain threshold value, it is taken to be the foreground (because it is NOT the background).
+
+4. The background flow directions are then extrapolated to obtain the vanishing point (camera's moving direction). This was done for future development's sake of obtaining the camera's heading.
 
 ## Usage
 Make sure you have OpenCV installed. Then, follow the following steps:
