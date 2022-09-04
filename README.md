@@ -1,10 +1,10 @@
-# Foreground and Background Segmentation using Farneback Optical Flow
+# Background Subtraction and Foreground Object Detection using Farneback Optical Flow
 
 This project was my Final Year Project in the National University of Singapore. Many functionalities are still not present and are to be added in the future. A legacy file of using the Lucas-Kanade Optical Flow has also been left in the `src/` directory for future reference and experimentation.
 
  
 ## Overview
-This repository attempts to subtract and separate the foreground from the background in post-processing using OpenCV's Farneback Optical flow. This works by the following methods:
+This repository attempts to utilise OpenCV's Farneback Optical Flow in a new way: Background Subtraction and Foreground object detection, performed in post-processing. This works by the following methods:
 
 1. The video input is split into a set of 5 x 5 boxes, then assuming the top two rows of the video feed being the sky and ignoring it to increase computational speed.
 
