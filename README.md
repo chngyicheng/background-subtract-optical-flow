@@ -1,6 +1,6 @@
 # Foreground and Background Segmentation using Farneback Optical Flow
 
-This project was my Final Year Project in the National University of Singapore. Many functionalities are still not present and are to be added in the future. A legacy file of using the Lucas-Kanade Optical Flow has also been left in the `src` file for future reference and experimentation.
+This project was my Final Year Project in the National University of Singapore. Many functionalities are still not present and are to be added in the future. A legacy file of using the Lucas-Kanade Optical Flow has also been left in the `src/` directory for future reference and experimentation.
 
  
 ## Overview
