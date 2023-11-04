@@ -1,10 +1,12 @@
 # Moving Object Detection with a Moving Monocular Camera using Optical Flow
 
-This project was my Final Year Project in the National University of Singapore. Many functionalities are still not present and are to be added in the future. A legacy file of using the Lucas-Kanade Optical Flow has also been left in the `src/` directory for future reference and experimentation.
+This project serves as my Final Year Project in the National University of Singapore in 2022. Many functionalities are still not present and are to be added in the future. A legacy file of using the Lucas-Kanade Optical Flow has also been left in the `src/` directory for future reference and experimentation.
+
+This R&D project aims to explore the possibility of using solely optical flow to achieve background substraction.
 
  
 ## Overview
-With the current background subtraction techniques, a static camera is required for the usual background subtraction techniques. For a moving camera, a new method had to be explored.
+With the current background subtraction techniques, a static camera is required for the usual background subtraction techniques. For a moving camera, a new method was explored.
 
 
 This repository attempts to utilise OpenCV's Farneback Optical Flow in this new way: background subtraction and foreground object detection, performed in post-processing.
